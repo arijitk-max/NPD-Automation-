@@ -14,11 +14,10 @@ from urllib.parse import quote_plus, urljoin
 class ProductVerifier:
     """Verify Amazon product URLs from an Excel tracker."""
 
-    def __init__(self, excel_path, sheet_name=None, show_browser=False, default_market="US"):
+    def __init__(self, excel_path, sheet_name=None, show_browser=False):
         self.excel_path = excel_path
         self.sheet_name = sheet_name
         self.show_browser = show_browser
-        self.default_market = default_market.upper()
         self.market_initialized = set()
         self.df = (
             pd.read_excel(excel_path, sheet_name=sheet_name)
@@ -65,12 +64,10 @@ class ProductVerifier:
 
         # Market aliases to handle full names like "Mexico"
         self.market_aliases = {
+            "MX": "MX",
+            "MEX": "MX",
             "MEXICO": "MX",
-            "CANADA": "CA",
-            "UNITED STATES": "US",
-            "USA": "US",
-            "UNITED KINGDOM": "UK",
-            "UK": "UK",
+            "AMAZON MX": "MX",
             "AMAZON MEXICO": "MX",
         }
 
@@ -348,7 +345,7 @@ class ProductVerifier:
                     continue
 
                 retailer = self._clean_cell(row.get("Retailer", "Amazon")) or "Amazon"
-                market = self._normalise_market(row.get("Market", "")) or self.default_market
+                market = self._normalise_market(row.get("Market", "")) or "MX"
 
                 print(f"\nProduct {index + 1} of {total} — search terms: {search_terms}")
 
@@ -404,7 +401,6 @@ def main():
         excel_path,
         sheet_name=sheet_name,
         show_browser=True,
-        default_market="MX",
     )
     verifier.verify_products()
 
