@@ -52,6 +52,24 @@ class ProductVerifier:
             }
         }
 
+        # Locale query parameters to keep us on the correct domain
+        self.locale_params = {
+            "CA": "language=en_CA",
+            "US": "language=en_US",
+            "UK": "language=en_GB",
+            "MX": "language=es_MX",
+        }
+
+        # Market aliases to handle full names like "Mexico"
+        self.market_aliases = {
+            "MEXICO": "MX",
+            "CANADA": "CA",
+            "UNITED STATES": "US",
+            "USA": "US",
+            "UNITED KINGDOM": "UK",
+            "UK": "UK",
+        }
+
         # User agents for rotation
         self.user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -95,6 +113,12 @@ class ProductVerifier:
         if gtin_value and gtin_value not in terms:
             terms.append(gtin_value)
 
+        for desc_column in ["Desc", "Description", "Product Description", "Long Description"]:
+            if desc_column in row.index:
+                desc_value = self._clean_cell(row.get(desc_column, ""))
+                if desc_value and desc_value not in terms:
+                    terms.append(desc_value)
+
         return terms
 
     @staticmethod
@@ -136,6 +160,20 @@ class ProductVerifier:
                 continue
         return ""
 
+    def _normalise_market(self, market):
+        market_clean = self._clean_cell(market)
+        if not market_clean:
+            return ""
+        market_upper = market_clean.upper()
+        return self.market_aliases.get(market_upper, market_upper)
+
+    def _append_locale_param(self, url, market):
+        param = self.locale_params.get(market)
+        if not param:
+            return url
+        separator = "&" if "?" in url else "?"
+        return f"{url}{separator}{param}"
+
     # ------------------------------------------------------------------
     # Selenium setup
     def setup_driver(self):
@@ -147,6 +185,10 @@ class ProductVerifier:
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument(f"--user-agent={random.choice(self.user_agents)}")
+        options.add_argument("--lang=es-MX")
+        options.add_argument("--disable-features=TranslateUI")
+        prefs = {"intl.accept_languages": "es-MX,es,en"}
+        options.add_experimental_option("prefs", prefs)
         service = Service(ChromeDriverManager().install())
         return webdriver.Chrome(service=service, options=options)
 
@@ -155,7 +197,7 @@ class ProductVerifier:
     def direct_asin_check(self, driver, asin, base_url):
         """Try to access the product directly using the ASIN."""
         try:
-            direct_url = f"{base_url}/dp/{asin}"
+            direct_url = self._append_locale_param(f"{base_url}/dp/{asin}", self.current_market)
             driver.get(direct_url)
             time.sleep(random.uniform(2, 3))
 
@@ -173,7 +215,10 @@ class ProductVerifier:
     def search_results_check(self, driver, base_url, search_term, target_asin=None):
         """Search for the product using a term and optionally match a target ASIN."""
         try:
-            search_url = f"{base_url}/s?k={quote_plus(search_term)}"
+            search_url = self._append_locale_param(
+                f"{base_url}/s?k={quote_plus(search_term)}",
+                self.current_market,
+            )
             driver.get(search_url)
             time.sleep(random.uniform(2, 3))
 
@@ -222,6 +267,8 @@ class ProductVerifier:
 
         print(f"\nChecking retailer={retailer}, market={market}, asin='{asin}'...")
 
+        self.current_market = market
+
         # Try direct ASIN lookup first if we have a valid ASIN
         if asin:
             url, status, found_asin = self.direct_asin_check(driver, asin, base_url)
@@ -267,7 +314,7 @@ class ProductVerifier:
                     continue
 
                 retailer = self._clean_cell(row.get("Retailer", "Amazon")) or "Amazon"
-                market = self._clean_cell(row.get("Market", "")) or "US"
+                market = self._normalise_market(row.get("Market", "")) or "US"
 
                 print(f"\nProduct {index + 1} of {total} — search terms: {search_terms}")
 
