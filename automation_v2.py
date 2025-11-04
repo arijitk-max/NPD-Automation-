@@ -14,10 +14,12 @@ from urllib.parse import quote_plus, urljoin
 class ProductVerifier:
     """Verify Amazon product URLs from an Excel tracker."""
 
-    def __init__(self, excel_path, sheet_name=None, show_browser=False):
+    def __init__(self, excel_path, sheet_name=None, show_browser=False, default_market="US"):
         self.excel_path = excel_path
         self.sheet_name = sheet_name
         self.show_browser = show_browser
+        self.default_market = default_market.upper()
+        self.market_initialized = set()
         self.df = (
             pd.read_excel(excel_path, sheet_name=sheet_name)
             if sheet_name is not None
@@ -69,6 +71,7 @@ class ProductVerifier:
             "USA": "US",
             "UNITED KINGDOM": "UK",
             "UK": "UK",
+            "AMAZON MEXICO": "MX",
         }
 
         # User agents for rotation
@@ -175,6 +178,34 @@ class ProductVerifier:
         separator = "&" if "?" in url else "?"
         return f"{url}{separator}{param}"
 
+    def _prepare_market(self, driver, base_url, market):
+        if market in self.market_initialized:
+            return
+
+        landing_url = self._append_locale_param(f"{base_url}/-/es/", market)
+        driver.get(landing_url)
+        time.sleep(random.uniform(1, 2))
+
+        if market == "MX":
+            try:
+                driver.add_cookie({
+                    "name": "lc-main",
+                    "value": "es_MX",
+                    "domain": ".amazon.com.mx",
+                    "path": "/",
+                })
+                driver.add_cookie({
+                    "name": "i18n-prefs",
+                    "value": "MXN",
+                    "domain": ".amazon.com.mx",
+                    "path": "/",
+                })
+                driver.get(landing_url)
+            except Exception as exc:  # noqa: BLE001
+                print(f"Cookie setup warning for market {market}: {exc}")
+
+        self.market_initialized.add(market)
+
     # ------------------------------------------------------------------
     # Selenium setup
     def setup_driver(self):
@@ -270,6 +301,7 @@ class ProductVerifier:
         print(f"\nChecking retailer={retailer}, market={market}, asin='{asin}'...")
 
         self.current_market = market
+        self._prepare_market(driver, base_url, market)
 
         # Try direct ASIN lookup first if we have a valid ASIN
         if asin:
@@ -316,7 +348,7 @@ class ProductVerifier:
                     continue
 
                 retailer = self._clean_cell(row.get("Retailer", "Amazon")) or "Amazon"
-                market = self._normalise_market(row.get("Market", "")) or "US"
+                market = self._normalise_market(row.get("Market", "")) or self.default_market
 
                 print(f"\nProduct {index + 1} of {total} — search terms: {search_terms}")
 
@@ -368,7 +400,12 @@ class ProductVerifier:
 def main():
     excel_path = "/path/to/your/tracker.xlsx"  # Update to the path of your spreadsheet
     sheet_name = "COB-4739"  # Set to None for the first sheet
-    verifier = ProductVerifier(excel_path, sheet_name=sheet_name, show_browser=True)
+    verifier = ProductVerifier(
+        excel_path,
+        sheet_name=sheet_name,
+        show_browser=True,
+        default_market="MX",
+    )
     verifier.verify_products()
 
 
