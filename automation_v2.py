@@ -14,9 +14,10 @@ from urllib.parse import quote_plus, urljoin
 class ProductVerifier:
     """Verify Amazon product URLs from an Excel tracker."""
 
-    def __init__(self, excel_path, sheet_name=None):
+    def __init__(self, excel_path, sheet_name=None, show_browser=False):
         self.excel_path = excel_path
         self.sheet_name = sheet_name
+        self.show_browser = show_browser
         self.df = (
             pd.read_excel(excel_path, sheet_name=sheet_name)
             if sheet_name is not None
@@ -179,7 +180,8 @@ class ProductVerifier:
     def setup_driver(self):
         """Initialize headless Chrome with anti-detection measures."""
         options = webdriver.ChromeOptions()
-        options.add_argument("--headless=new")
+        if not self.show_browser:
+            options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--window-size=1920,1080")
@@ -366,7 +368,7 @@ class ProductVerifier:
 def main():
     excel_path = "/path/to/your/tracker.xlsx"  # Update to the path of your spreadsheet
     sheet_name = "COB-4739"  # Set to None for the first sheet
-    verifier = ProductVerifier(excel_path, sheet_name=sheet_name)
+    verifier = ProductVerifier(excel_path, sheet_name=sheet_name, show_browser=True)
     verifier.verify_products()
 
 
