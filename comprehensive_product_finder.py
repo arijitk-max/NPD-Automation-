@@ -10,6 +10,8 @@ Updates:
       product name (after normalization) are returned. Multiple matches are kept.
     * Keeps track of all scraped results for auditing while only persisting
       exact matches back to the Excel workbook.
+    * Supports multiple retailer markets per row (Amazon AU/US, Walmart US, Target US,
+      JB Hi-Fi, Harvey Norman) by reading the Retailer/Market columns in each tracker.
 
 Usage:
     python comprehensive_product_finder.py --input input.xlsx --output results.xlsx [options]
@@ -48,7 +50,7 @@ DEFAULT_CONFIG: Dict[str, object] = {
     "allow_manual_captcha": True,
     "captcha_max_attempts": 3,
     "captcha_poll_delay": 4,
-    "max_results_per_retailer": 6,
+    "max_results_per_retailer": 5,
     "save_interval": 5,
     "user_agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -57,9 +59,10 @@ DEFAULT_CONFIG: Dict[str, object] = {
 }
 
 RETAILERS: Dict[str, Dict[str, object]] = {
+    # Amazon variants share selectors; host is injected per-market.
     "amazon": {
-        "domains": ["amazon.com.au"],
-        "search_urls": ["https://www.amazon.com.au/s?k={query}"],
+        "host": "www.amazon.com.au",
+        "search_urls": ["https://{host}/s?k={query}"],
         "result_selector": "div[data-component-type='s-search-result']",
         "title_selector": "h2 a span",
         "link_selector": "h2 a",
@@ -86,6 +89,22 @@ RETAILERS: Dict[str, Dict[str, object]] = {
         "title_selector": ".product-name, .product-title, h2, h3",
         "link_selector": "a[href*='/product']",
         "sponsored_markers": [],
+    },
+    "walmart_us": {
+        "host": "www.walmart.com",
+        "search_urls": ["https://{host}/search?q={query}"],
+        "result_selector": "div.search-result-gridview-item-wrapper, div[data-automation-id='search-result-gridview-item'], div[data-item-id]",
+        "title_selector": "a.product-title-link span, a[data-automation-id='product-title'] span, a[data-testid='product-title'] span",
+        "link_selector": "a.product-title-link, a[data-automation-id='product-title'], a[data-testid='product-title']",
+        "sponsored_markers": ["sponsored"],
+    },
+    "target_us": {
+        "host": "www.target.com",
+        "search_urls": ["https://{host}/s?searchTerm={query}"],
+        "result_selector": "[data-test='product-card'], [data-test='productGrid'] [data-test='productCard']",
+        "title_selector": "[data-test='product-title'], a[data-test='product-title']",
+        "link_selector": "a[data-test='product-title']",
+        "sponsored_markers": ["sponsored"],
     },
 }
 
@@ -151,6 +170,7 @@ class RetailerSearcher:
     def __init__(self, config: Dict[str, object]):
         self.config = config
         self.driver = self._setup_driver()
+        self.amazon_hosts_initialized: set[str] = set()
 
     # --------------------------- driver management ---------------------------------- #
 
@@ -264,16 +284,61 @@ class RetailerSearcher:
 
     # ------------------------------ extraction ------------------------------------- #
 
-    def search_retailer(self, retailer: str, query: str) -> List[SearchResult]:
+    def _prepare_amazon_au(self, host: str) -> None:
+        """Best-effort location priming for Amazon AU hosts."""
+        base_url = f"https://{host}/"
+        logging.info("Preparing Amazon AU context for host %s", host)
+        try:
+            self.driver.get(base_url)
+            time.sleep(1.5)
+        except Exception as exc:
+            logging.debug("Failed opening Amazon base page for %s: %s", host, exc)
+            return
+
+        # Attempt lightweight postcode update; ignore failures.
+        try:
+            self.driver.execute_script(
+                """
+                try {
+                    fetch('https://%s/gp/delivery/ajax/address-change.html', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                        body: 'locationType=LOCATION_INPUT&zipCode=2000&storeContext=generic&deviceType=web&pageType=Detail&actionSource=glow',
+                        credentials: 'include'
+                    }).catch(() => {});
+                } catch (e) {}
+                """
+                % host
+            )
+            time.sleep(1.0)
+            self.driver.refresh()
+            time.sleep(1.0)
+        except Exception:
+            pass
+
+    def search_retailer(
+        self, retailer: str, query: str, overrides: Optional[Dict[str, object]] = None
+    ) -> List[SearchResult]:
         if retailer not in RETAILERS:
             logging.warning("Retailer %s is not configured.", retailer)
             return []
 
-        config = RETAILERS[retailer]
+        base_config = RETAILERS[retailer]
+        config = dict(base_config)
+        if overrides:
+            config.update(overrides)
+
         results: List[SearchResult] = []
 
-        for search_url in config["search_urls"]:
-            url = search_url.format(query=quote_plus(query))
+        host = config.get("host")
+        search_templates = config.get("search_urls", [])
+
+        if not search_templates:
+            logging.warning("No search URLs configured for %s.", retailer)
+            return results
+
+        for search_template in search_templates:
+            url = search_template.format(query=quote_plus(query), host=host) if "{host}" in search_template else search_template.format(query=quote_plus(query))
             logging.info("Searching %s with query '%s' -> %s", retailer, query, url)
 
             try:
@@ -282,6 +347,11 @@ class RetailerSearcher:
             except TimeoutException:
                 logging.warning("Timed out loading %s search page.", retailer)
                 continue
+
+            if retailer == "amazon":
+                if host and host.endswith(".com.au") and host not in self.amazon_hosts_initialized:
+                    self._prepare_amazon_au(host)
+                    self.amazon_hosts_initialized.add(host)
 
             if not self._ensure_page_ready(retailer):
                 logging.warning("Skipping %s due to unresolved CAPTCHA.", retailer)
@@ -323,6 +393,8 @@ class RetailerSearcher:
             logging.debug("No result elements found on %s.", retailer)
             return results
 
+        host = retailer_config.get("host", "")
+
         for element in elements:
             try:
                 title = ""
@@ -358,7 +430,8 @@ class RetailerSearcher:
                 if any(marker in element_text for marker in retailer_config["sponsored_markers"]):
                     continue
 
-                results.append(SearchResult(url=url, title=title, retailer=retailer))
+                metadata = {"host": host} if host else {}
+                results.append(SearchResult(url=url, title=title, retailer=retailer, meta=metadata))
             except NoSuchElementException:
                 continue
             except Exception as exc:
@@ -390,8 +463,22 @@ class ProductMatcher:
                 selectors = ["#productTitle", "span#productTitle", "h1.a-size-large"]
             elif result.retailer == "jbhifi":
                 selectors = ["h1.product-title", "h1", ".product-title"]
-            else:  # harveynorman
+            elif result.retailer == "harveynorman":
                 selectors = ["h1", ".product-name", ".product-title"]
+            elif result.retailer == "walmart_us":
+                selectors = [
+                    "h1.prod-ProductTitle div",
+                    "h1[data-automation-id='product-title']",
+                    "[data-testid='product-title']",
+                ]
+            elif result.retailer == "target_us":
+                selectors = [
+                    "h1[data-test='product-title']",
+                    "h1[data-test='productTitle']",
+                    "h1",
+                ]
+            else:
+                selectors = ["h1", ".product-title", ".product-name"]
 
             for selector in selectors:
                 try:
@@ -481,11 +568,30 @@ class ProductURLFinder:
         try:
             for index, row in df.iterrows():
                 product_name = str(row["Product Name"]).strip()
-                retailer_raw = str(row["Retailer"]).lower().strip()
-                retailer = self._normalize_retailer(retailer_raw)
+                retailer_value = str(row["Retailer"]).strip()
+                market_value = ""
+                if "Market" in row.index and pd.notna(row["Market"]):
+                    market_value = str(row["Market"]).strip()
 
-                logging.info("Processing row %s: %s (%s)", index + 1, product_name, retailer)
-                result = self._process_product(product_name, retailer)
+                retailer_key, overrides = self._normalize_retailer(retailer_value, market_value)
+
+                if not retailer_key:
+                    logging.warning(
+                        "Row %s: Unsupported retailer '%s' (market: '%s').",
+                        index + 1,
+                        retailer_value,
+                        market_value,
+                    )
+                    result = ProcessingResult(
+                        success=False,
+                        matches=[],
+                        all_results=[],
+                        message=f"Unsupported retailer '{retailer_value}'",
+                    )
+                else:
+                    logging.info("Processing row %s: %s (%s)", index + 1, product_name, retailer_key)
+                    result = self._process_product(product_name, retailer_key, overrides)
+
                 self._update_dataframe(df, index, result)
 
                 if (index + 1) % int(self.config["save_interval"]) == 0:
@@ -497,14 +603,19 @@ class ProductURLFinder:
         finally:
             self.close()
 
-    def _process_product(self, product_name: str, retailer: str) -> ProcessingResult:
+    def _process_product(
+        self,
+        product_name: str,
+        retailer: str,
+        overrides: Optional[Dict[str, object]] = None,
+    ) -> ProcessingResult:
         if not product_name:
             return ProcessingResult(success=False, message="Empty product name.")
         if retailer not in RETAILERS:
             return ProcessingResult(success=False, message=f"Unsupported retailer '{retailer}'.")
 
         try:
-            raw_results = self.retailer_searcher.search_retailer(retailer, product_name)
+            raw_results = self.retailer_searcher.search_retailer(retailer, product_name, overrides)
         except Exception as exc:
             logging.error("Search failure on %s: %s", retailer, exc)
             return ProcessingResult(success=False, message=str(exc))
@@ -536,7 +647,7 @@ class ProductURLFinder:
             best = result.matches[0]
             df.at[index, "Found URL"] = best.url
             df.at[index, "Found Title"] = best.meta.get("full_title", best.title)
-            df.at[index, "Matched Retailer"] = best.retailer
+            df.at[index, "Matched Retailer"] = best.meta.get("host", best.retailer)
             df.at[index, "Match Score"] = f"{best.score:.1f}"
             df.at[index, "Matching URLs"] = "\n".join(
                 f"{match.url} | {match.meta.get('full_title', match.title)} | {match.score:.1f}"
@@ -544,22 +655,52 @@ class ProductURLFinder:
             )
 
         # Persist all scraped results for audit
-        serialisable_results = [
-            {"url": item.url, "title": item.title, "retailer": item.retailer, "score": f"{item.score:.1f}"}
-            for item in result.all_results
-        ]
+        serialisable_results = []
+        for item in result.all_results:
+            serialisable_results.append(
+                {
+                    "url": item.url,
+                    "title": item.title,
+                    "retailer": item.retailer,
+                    "host": item.meta.get("host", ""),
+                    "score": f"{item.score:.1f}",
+                }
+            )
         df.at[index, "All Scraped Results"] = json.dumps(serialisable_results)
 
     @staticmethod
-    def _normalize_retailer(retailer: str) -> str:
-        retailer = retailer.lower()
-        if "amazon" in retailer:
-            return "amazon"
-        if "jb" in retailer and "hi" in retailer:
-            return "jbhifi"
-        if "harvey" in retailer and "norm" in retailer:
-            return "harveynorman"
-        return retailer
+    def _normalize_retailer(retailer: str, market: str = "") -> Tuple[Optional[str], Dict[str, object]]:
+        combined = f"{retailer} {market}"
+        tokens = [token for token in re.split(r"[\s\-\_/|,\.\(\)]+", combined.lower()) if token and token != "nan"]
+        token_set = set(tokens)
+        overrides: Dict[str, object] = {}
+
+        if "amazon" in token_set:
+            host = "www.amazon.com"
+            if token_set & {"au", "aus", "australia"}:
+                host = "www.amazon.com.au"
+            elif token_set & {"ca", "canada"}:
+                host = "www.amazon.ca"
+            elif token_set & {"uk", "co", "gb", "united", "kingdom"}:
+                host = "www.amazon.co.uk"
+            overrides["host"] = host
+            return "amazon", overrides
+
+        if "walmart" in token_set:
+            overrides["host"] = "www.walmart.com"
+            return "walmart_us", overrides
+
+        if "target" in token_set:
+            overrides["host"] = "www.target.com"
+            return "target_us", overrides
+
+        if "jb" in token_set and "hi" in token_set:
+            return "jbhifi", overrides
+
+        if "harvey" in token_set and "norman" in token_set:
+            return "harveynorman", overrides
+
+        return None, overrides
 
 
 # -------------------------------------------------------------------------------------- #
