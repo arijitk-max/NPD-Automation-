@@ -30,7 +30,7 @@ import json
 import logging
 import argparse
 import random
-from typing import List, Dict, Optional, Tuple, Set, Any, Union
+from typing import List, Dict, Optional, Tuple, Set, Any
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlencode, quote_plus
 
@@ -67,14 +67,7 @@ DEFAULT_CONFIG = {
     "max_retries": 3,
     "save_interval": 5,
     "max_results_per_retailer": 25,  # Only check first 25 non-sponsored results
-    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    # AI/ML Configuration
-    "use_semantic_matching": True,  # Use sentence transformers for semantic similarity
-    "semantic_model": "all-MiniLM-L6-v2",  # Fast and accurate model for semantic matching
-    "semantic_threshold": 0.75,  # Minimum semantic similarity (0-1)
-    "use_llm_validation": False,  # Use LLM (OpenAI) for complex validation (requires API key)
-    "llm_api_key": None,  # OpenAI API key (set via environment variable OPENAI_API_KEY)
-    "ml_device": None,  # Device for ML models ('cpu' or 'cuda'), None = auto-detect
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
 # Retailer configurations
@@ -314,6 +307,28 @@ RETAILERS = {
         ],
         "product_selector": ".product-item, .product-tile",
         "title_selector": ".product-name, .product-title",
+        "link_selector": "a",
+        "sponsored_indicators": []
+    },
+    "costco": {
+        "domains": ["costco.com"],
+        "search_urls": [
+            "https://www.costco.com/CatalogSearch?dept=All&keyword={query}",
+            "https://www.costco.com/CatalogSearch?keyword={query}"
+        ],
+        "product_selector": ".product, .product-tile, [data-automation-id='product-tile'], .product-list-item",
+        "title_selector": ".description, .product-title, h3, a[data-automation-id='product-title']",
+        "link_selector": "a",
+        "sponsored_indicators": []
+    },
+    "costco-us": {
+        "domains": ["costco.com"],
+        "search_urls": [
+            "https://www.costco.com/CatalogSearch?dept=All&keyword={query}",
+            "https://www.costco.com/CatalogSearch?keyword={query}"
+        ],
+        "product_selector": ".product, .product-tile, [data-automation-id='product-tile'], .product-list-item",
+        "title_selector": ".description, .product-title, h3, a[data-automation-id='product-title']",
         "link_selector": "a",
         "sponsored_indicators": []
     }
@@ -1875,49 +1890,21 @@ class RetailerSearcher:
                     
                     # Retailer-specific extraction
                     if retailer == "amazon":
-                        # Amazon-specific selectors - multiple fallback methods
+                        # Amazon-specific selectors
                         try:
-                            # Method 1: Standard Amazon structure - h2 with link containing span
+                            # Method 1: Standard Amazon structure
                             h2_link = element.find_element(By.CSS_SELECTOR, "h2 a")
                             url = h2_link.get_attribute('href')
-                            if url:
-                                try:
-                                    # Try to get title from span inside the link
-                                    title_span = h2_link.find_element(By.CSS_SELECTOR, "span")
-                                    title = title_span.text.strip()
-                                except:
-                                    # Fallback to link text
-                                    title = h2_link.text.strip()
+                            try:
+                                title = h2_link.find_element(By.CSS_SELECTOR, "span").text.strip()
+                            except:
+                                title = h2_link.text.strip()
                         except:
                             try:
                                 # Method 2: Any link with data-asin (Amazon product indicator)
                                 asin_link = element.find_element(By.CSS_SELECTOR, "a[href*='/dp/'], a[href*='/gp/product/']")
                                 url = asin_link.get_attribute('href')
-                                if url:
-                                    title = asin_link.text.strip() or element.text.strip()
-                            except:
-                                try:
-                                    # Method 3: Look for any link with /dp/ or /gp/product/ in the element
-                                    all_links = element.find_elements(By.TAG_NAME, "a")
-                                    for link in all_links:
-                                        href = link.get_attribute('href') or ''
-                                        if '/dp/' in href or '/gp/product/' in href:
-                                            url = href
-                                            title = link.text.strip() or element.text.strip()
-                                            if title and url:
-                                                break
-                                except:
-                                    pass
-                        
-                        # If still no title/url, try to extract from data-asin attribute
-                        if not title or not url:
-                            try:
-                                data_asin = element.get_attribute('data-asin')
-                                if data_asin:
-                                    # Construct URL from ASIN
-                                    url = f"https://www.amazon.com/dp/{data_asin}"
-                                    # Try to get title from any text in the element
-                                    title = element.text.strip()[:200]  # Limit length
+                                title = asin_link.text.strip() or element.text.strip()
                             except:
                                 pass
                     elif retailer == "jbhifi":
@@ -2098,73 +2085,19 @@ def extract_product_details(product_name: str) -> Dict[str, Any]:
         'low_bridge_fit': False,  # Low Bridge Fit variant
         'flavor': '',  # Flavor/variety for candy (e.g., "Patriotic Mix", "Peanut", "Original")
         'count': None,  # Count/quantity (e.g., 115, 90, 48)
-        'pack_size': None,  # Pack size (e.g., 8pk, 21pk, 28pc) - CRITICAL for validation
-        'product_type': '',  # Product type (e.g., "Type II", "Type III") - CRITICAL for validation
-        'capacity': None,  # Capacity (e.g., 1.5qt, 16oz) - CRITICAL for validation
         'full_text': normalize_text(product_name)
     }
     
     # Extract weight
     details['weight'] = extract_weight(product_name)
     
-    # Extract pack size (pk, pc, pack) - CRITICAL for validation
-    pack_patterns = [
-        r'(\d+)\s*pk\b',  # "8pk", "21pk", "8 pk"
-        r'(\d+)\s*pc\b',  # "28pc", "6pc", "28 pc"
-        r'(\d+)\s*pack\b',  # "8 pack", "21 pack"
-        r'(\d+)\s*piece',  # "28 piece", "6 piece"
-        r'(\d+)\s*pieces',  # "28 pieces", "6 pieces"
-    ]
-    for pattern in pack_patterns:
-        match = re.search(pattern, product_name, re.IGNORECASE)
-        if match:
-            try:
-                details['pack_size'] = int(match.group(1))
-                break
-            except:
-                pass
-    
-    # Extract product type (Type I, Type II, Type III, etc.) - CRITICAL for validation
-    type_patterns = [
-        r'type\s*([ivxlcdm]+)',  # "Type II", "Type III" (Roman numerals)
-        r'type\s*(\d+)',  # "Type 2", "Type 3" (Arabic numerals)
-    ]
-    for pattern in type_patterns:
-        match = re.search(pattern, product_name, re.IGNORECASE)
-        if match:
-            details['product_type'] = match.group(1).upper()
-            break
-    
-    # Extract capacity (qt, oz, fl oz, etc.) - CRITICAL for validation
-    capacity_patterns = [
-        r'(\d+\.?\d*)\s*qt\b',  # "1.5qt", "3.5 qt"
-        r'(\d+\.?\d*)\s*quart',  # "1.5 quart"
-        r'(\d+\.?\d*)\s*fl\s*oz\b',  # "16 fl oz", "13 fl oz"
-        r'(\d+\.?\d*)\s*oz\b',  # "16oz", "13 oz" (but not weight oz)
-    ]
-    for pattern in capacity_patterns:
-        match = re.search(pattern, product_name, re.IGNORECASE)
-        if match:
-            try:
-                # Only extract if it's not a weight (weight usually comes after product name, capacity usually before)
-                capacity = float(match.group(1))
-                # Check if it's likely capacity (qt, fl oz) vs weight (oz)
-                if 'qt' in pattern or 'quart' in pattern or 'fl oz' in pattern:
-                    details['capacity'] = capacity
-                    break
-                elif 'oz' in pattern and 'fl' not in product_name.lower()[max(0, match.start()-10):match.start()]:
-                    # Could be weight, but if it's in a capacity context, treat as capacity
-                    # For now, extract both and let validation decide
-                    if details['weight'] is None:  # If no weight found, this might be capacity
-                        details['capacity'] = capacity
-            except:
-                pass
-    
     # Extract count/quantity for candy products (e.g., "115 ct", "48 ct", "90 ct")
+    import re
     count_patterns = [
-        r'(\d+)\s*ct\b',  # "115 ct", "48 ct"
-        r'(\d+)\s*count\b',  # "115 count", "8 count"
+        r'(\d+)\s*ct',  # "115 ct", "48 ct"
+        r'(\d+)\s*count',  # "115 count"
         r'pack\s*of\s*(\d+)',  # "Pack of 10"
+        r'(\d+)\s*pieces',  # "270 pieces"
     ]
     for pattern in count_patterns:
         match = re.search(pattern, product_name, re.IGNORECASE)
@@ -2196,68 +2129,40 @@ def extract_product_details(product_name: str) -> Dict[str, Any]:
                 details['flavor'] = keyword
                 break
     
-    # Extract brand (first significant word, usually capitalized)
-    # Common brands: Graco, NUK, Rubbermaid, Sharpie, Expo, Paper Mate, Oster, Calphalon, Contigo, Stearns
-    brand_keywords = ['graco', 'nuk', 'rubbermaid', 'sharpie', 'expo', 'paper mate', 'papermate', 'oster', 
-                     'calphalon', 'contigo', 'stearns', 'elmer', 'prismacolor', 'ball', 'margaritaville',
-                     'dymo', 'coleman', 'sunbeam', 'sparkling ice']
+    # Extract brand (usually first word before |)
+    if '|' in product_name:
+        parts = product_name.split('|')
+        if len(parts) > 0:
+            details['brand'] = normalize_text(parts[0].strip())
     
-    product_lower = product_name.lower()
-    for brand in brand_keywords:
-        if brand in product_lower:
-            # Extract the actual brand name (capitalized version)
-            brand_idx = product_lower.find(brand)
-            # Find the word boundaries
-            words = product_name.split()
-            for word in words:
-                if brand in word.lower():
-                    details['brand'] = normalize_text(word)
-                    break
-            if not details['brand']:
-                details['brand'] = normalize_text(brand)
-            break
-    
-    # If no brand found via keywords, try first word (if capitalized)
-    if not details['brand']:
-        words = product_name.split()
-        if words and words[0][0].isupper() and len(words[0]) > 2:
-            details['brand'] = normalize_text(words[0])
-    
-    # Extract model name - look for model patterns like "Geo Pop", "Declan", "TurboBooster 2.0", etc.
-    # Models are usually after brand, before pack size/color
-    model_patterns = [
-        r'turbobooster\s*2\.0',  # "TurboBooster 2.0"
-        r'geo\s*pop',  # "Geo Pop"
-        r'declan',  # "Declan"
-        r'west\s*loop',  # "West Loop"
-        r'premier',  # "Premier"
-        r'fun\s*grips',  # "Fun Grips"
-        r'ink\s*joy',  # "Ink Joy"
-        r's-gel',  # "S-Gel"
-        r'clearpoint',  # "Clearpoint"
-        r'flair',  # "Flair"
-    ]
-    
-    for pattern in model_patterns:
-        match = re.search(pattern, product_name, re.IGNORECASE)
-        if match:
-            details['model'] = normalize_text(match.group(0))
-            break
-    
-    # If no model found via patterns, try extracting after brand
-    if not details['model'] and details['brand']:
-        brand_lower = details['brand'].lower()
-        if brand_lower in product_lower:
-            after_brand = product_name[product_lower.find(brand_lower) + len(brand_lower):].strip()
-            # Take first 2-3 words as potential model
-            words = after_brand.split()[:3]
-            if words:
-                potential_model = ' '.join(words)
-                # Remove common non-model words
-                non_model_words = ['kids', 'premium', 'easy', 'store', 'with', 'and', 'the', 'a', 'an']
-                model_words = [w for w in words if w.lower() not in non_model_words]
-                if model_words:
-                    details['model'] = normalize_text(' '.join(model_words[:2]))
+    # Extract model name (after | and before - or before common words like "Glasses", "with", etc.)
+    if '|' in product_name:
+        after_brand = product_name.split('|')[1].strip()
+        
+        # Try splitting by '-' first (most common pattern)
+        if '-' in after_brand:
+            model_part = after_brand.split('-')[0].strip()
+            details['model'] = normalize_text(model_part)
+        else:
+            # If no '-', try to find model before common words
+            # Common patterns: "Meta Vanguard Glasses", "Gascan Sunglasses", etc.
+            model_end_patterns = ['Glasses', 'Sunglasses', 'Eyewear', 'with', ',', '(', '-']
+            model_part = after_brand
+            for pattern in model_end_patterns:
+                if pattern in after_brand:
+                    idx = after_brand.find(pattern)
+                    if idx > 0:
+                        model_part = after_brand[:idx].strip()
+                        break
+            
+            # Clean up - remove extra words at end
+            model_words = model_part.split()
+            # Keep meaningful words (usually 1-3 words like "Meta Vanguard", "Gascan", etc.)
+            if len(model_words) <= 4:  # Allow up to 4 words for models like "Meta Vanguard Low Bridge Fit"
+                details['model'] = normalize_text(model_part)
+            else:
+                # If too many words, try to extract just the core model name (first 2-3 words typically)
+                details['model'] = normalize_text(' '.join(model_words[:3]))
     
     # Extract color (usually after the MAIN - separator, which comes after model name)
     color_words = []
@@ -2373,11 +2278,7 @@ def extract_product_details(product_name: str) -> Dict[str, Any]:
     # Common color words list to help identify colors in the product name
     common_colors = ['white', 'black', 'grey', 'gray', 'green', 'blue', 'red', 'yellow', 'orange', 
                      'purple', 'violet', 'brown', 'pink', 'sapphire', 'emerald', 'amethyst', 'cosmic',
-                     'matte', 'shiny', 'chalky', 'mystic', 'asteroid', 'graphite', 'silver', 'gold',
-                     'teal', 'lime', 'jade', 'azalea', 'periwinkle', 'amethyst', 'oat milk']
-    
-    # Colors to exclude (not actual colors but product descriptors)
-    exclude_colors = ['oat milk']  # "Oat Milk" is a product variant, not a color - should match "Silver" instead
+                     'matte', 'shiny', 'chalky', 'mystic', 'asteroid', 'graphite']
     
     # Also search for color words we might have missed, but ONLY in the color section (after the main separator)
     # Only search after the model part to avoid picking up colors from brand/model names
@@ -2514,116 +2415,98 @@ class ProductMatcher:
         self.config = config
         self.fuzzy_threshold = config.get('fuzzy_threshold', 60)
         self.driver = None  # Will be set if needed for description fetching
-        
-        # AI/ML components for semantic matching
-        self.semantic_matcher = None
-        self.use_semantic_matching = config.get('use_semantic_matching', True)
-        self.semantic_threshold = config.get('semantic_threshold', 0.75)
-        self.use_llm_validation = config.get('use_llm_validation', False)
-        self.llm_api_key = config.get('llm_api_key', None)
-        
-        # Lazy load semantic matcher when needed
-        if self.use_semantic_matching:
-            try:
-                from ml_models.semantic_matcher import SemanticMatcher
-                self.semantic_matcher = SemanticMatcher(
-                    model_name=config.get('semantic_model', 'all-MiniLM-L6-v2'),
-                    device=config.get('ml_device', None)
-                )
-                logging.info("Semantic matcher initialized (will load model on first use)")
-            except ImportError:
-                logging.warning("sentence-transformers not installed. Install with: pip install sentence-transformers scikit-learn")
-                self.use_semantic_matching = False
-            except Exception as e:
-                logging.warning(f"Could not initialize semantic matcher: {e}")
-                self.use_semantic_matching = False
     
     def set_driver(self, driver):
         """Set WebDriver for fetching product descriptions"""
         self.driver = driver
     
-    def _get_semantic_score(self, text1: str, text2: str) -> Optional[float]:
-        """Get semantic similarity score between two texts"""
-        if not self.use_semantic_matching or not self.semantic_matcher:
-            return None
+    def _load_ml_models(self):
+        """Lazy load ML models when needed"""
+        if not self.ml_enabled or not self.ml_config:
+            return
         
         try:
-            if not self.semantic_matcher.is_initialized():
-                self.semantic_matcher.load_model()
+            # Load brand extractor
+            if self.ml_config.get('brand_extractor', {}).get('enabled', False) and not self.brand_extractor:
+                try:
+                    from ml_models.brand_extractor import BrandExtractor
+                    brand_cfg = self.ml_config['brand_extractor']
+                    self.brand_extractor = BrandExtractor(
+                        model_name=brand_cfg.get('model_name', 'google/flan-t5-base'),
+                        device=brand_cfg.get('device')
+                    )
+                    logging.info("Brand extractor loaded")
+                except Exception as e:
+                    logging.warning(f"Could not load brand extractor: {e}")
             
-            score = self.semantic_matcher.calculate_semantic_similarity(text1, text2)
-            # Convert to 0-100 scale to match fuzzy score
-            return score * 100
+            # Load NER extractor
+            if self.ml_config.get('ner_extractor', {}).get('enabled', False) and not self.ner_extractor:
+                try:
+                    from ml_models.ner_extractor import NERExtractor
+                    ner_cfg = self.ml_config['ner_extractor']
+                    self.ner_extractor = NERExtractor(
+                        model_name=ner_cfg.get('model_name', 'dslim/roberta-base-NER'),
+                        device=ner_cfg.get('device')
+                    )
+                    logging.info("NER extractor loaded")
+                except Exception as e:
+                    logging.warning(f"Could not load NER extractor: {e}")
+            
+            # Load CLIP matcher
+            if self.ml_config.get('clip_matcher', {}).get('enabled', False) and not self.clip_matcher:
+                try:
+                    from ml_models.clip_matcher import CLIPMatcher
+                    clip_cfg = self.ml_config['clip_matcher']
+                    self.clip_matcher = CLIPMatcher(
+                        model_name=clip_cfg.get('model_name', 'ViT-B-32'),
+                        pretrained=clip_cfg.get('pretrained', 'openai'),
+                        device=clip_cfg.get('device')
+                    )
+                    logging.info("CLIP matcher loaded")
+                except Exception as e:
+                    logging.warning(f"Could not load CLIP matcher: {e}")
+            
+            # Load image embedder
+            if self.ml_config.get('image_embedder', {}).get('enabled', False) and not self.image_embedder:
+                try:
+                    from ml_models.image_embedder import ImageEmbedder
+                    img_cfg = self.ml_config['image_embedder']
+                    self.image_embedder = ImageEmbedder(
+                        model_name=img_cfg.get('model_name', 'microsoft/resnet-50'),
+                        device=img_cfg.get('device')
+                    )
+                    logging.info("Image embedder loaded")
+                except Exception as e:
+                    logging.warning(f"Could not load image embedder: {e}")
+            
+            # Load OCR extractor
+            if self.ml_config.get('ocr_extractor', {}).get('enabled', False) and not self.ocr_extractor:
+                try:
+                    from ml_models.ocr_extractor import OCRExtractor
+                    ocr_cfg = self.ml_config['ocr_extractor']
+                    self.ocr_extractor = OCRExtractor(
+                        lang=ocr_cfg.get('lang', 'en'),
+                        device=ocr_cfg.get('device')
+                    )
+                    logging.info("OCR extractor loaded")
+                except Exception as e:
+                    logging.warning(f"Could not load OCR extractor: {e}")
+            
+            # Load feature extractor
+            if self.ml_config.get('feature_extractor', {}).get('enabled', False) and not self.feature_extractor:
+                try:
+                    from ml_models.feature_extractor import FeatureExtractor
+                    feat_cfg = self.ml_config['feature_extractor']
+                    self.feature_extractor = FeatureExtractor(
+                        model_name=feat_cfg.get('model_name', 'meta-llama/Llama-2-7b-chat-hf'),
+                        device=feat_cfg.get('device')
+                    )
+                    logging.info("Feature extractor loaded")
+                except Exception as e:
+                    logging.warning(f"Could not load feature extractor: {e}")
+                    
         except Exception as e:
-            logging.debug(f"Semantic matching failed: {e}")
-            return None
-    
-    def _validate_with_llm(self, original_product: str, candidate_product: str, 
-                          required_attributes: Dict[str, any]) -> Tuple[bool, str]:
-        """
-        Use LLM to validate if candidate product matches original
-        
-        Returns:
-            Tuple of (is_valid, reasoning)
-        """
-        if not self.use_llm_validation or not self.llm_api_key:
-            return (True, "LLM validation not enabled")
-        
-        try:
-            # Try OpenAI API
-            try:
-                import openai
-                client = openai.OpenAI(api_key=self.llm_api_key)
-                
-                prompt = f"""You are a product matching expert. Determine if the candidate product matches the original product.
-
-Original Product: {original_product}
-Candidate Product: {candidate_product}
-
-Required Attributes:
-{chr(10).join(f"- {k}: {v}" for k, v in required_attributes.items() if v is not None and v != "")}
-
-Analyze if:
-1. The candidate product is the SAME product as the original (not just similar)
-2. All required attributes match (pack size, color, model, type, capacity)
-3. The brand matches
-4. The specifications match
-
-Respond with JSON:
-{{
-    "is_match": true/false,
-    "confidence": 0.0-1.0,
-    "reasoning": "brief explanation",
-    "mismatched_attributes": ["attribute1", "attribute2"]
-}}"""
-
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",  # Use cheaper model for validation
-                    messages=[
-                        {"role": "system", "content": "You are a product matching expert. Always respond with valid JSON."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=200
-                )
-                
-                import json
-                result = json.loads(response.choices[0].message.content)
-                is_valid = result.get('is_match', False) and result.get('confidence', 0) > 0.8
-                reasoning = result.get('reasoning', '')
-                
-                return (is_valid, reasoning)
-                
-            except ImportError:
-                logging.warning("openai package not installed. Install with: pip install openai")
-                return (True, "LLM validation not available")
-            except Exception as e:
-                logging.debug(f"LLM validation error: {e}")
-                return (True, f"LLM validation failed: {str(e)}")
-                
-        except Exception as e:
-            logging.debug(f"LLM validation error: {e}")
-            return (True, "LLM validation not available")
+            logging.error(f"Error loading ML models: {e}")
     
     def _fetch_product_page_details(self, url: str, retailer: str) -> Dict[str, str]:
         """Fetch full product page details including title, description, and specifications"""
@@ -2838,25 +2721,6 @@ Respond with JSON:
         # Base score from fuzzy matching
         base_score = fuzz.token_sort_ratio(variant_text, original_text)
         
-        # AI-Enhanced: Get semantic similarity score
-        semantic_score = None
-        if self.use_semantic_matching:
-            try:
-                # Use original product name for semantic matching (more context)
-                original_product_name = original_details.get('full_text', variant)
-                semantic_score = self._get_semantic_score(original_product_name, result_title)
-                if semantic_score:
-                    logging.debug(f"Semantic similarity: {semantic_score:.1f}% (fuzzy: {base_score:.1f}%)")
-            except Exception as e:
-                logging.debug(f"Semantic matching error: {e}")
-        
-        # Combine fuzzy and semantic scores (weighted average)
-        if semantic_score is not None:
-            # Use 60% semantic + 40% fuzzy for better understanding
-            combined_base_score = 0.6 * semantic_score + 0.4 * base_score
-            base_score = combined_base_score
-            logging.debug(f"Combined score (semantic + fuzzy): {base_score:.1f}%")
-        
         # Bonus for matching brand
         brand_bonus = 0
         if original_details['brand'] and original_details['brand'] in variant_text:
@@ -3011,6 +2875,7 @@ Respond with JSON:
             variant_lower = variant_text.lower()
             
             # Extract count from result
+            import re
             result_count = None
             count_patterns = [
                 r'(\d+)\s*ct',
@@ -3043,132 +2908,44 @@ Respond with JSON:
                     count_penalty = 30
                     logging.debug(f"Count not found in result: expected {expected_count}")
         
-        # CRITICAL: Pack size matching - MUST match exactly (8pk vs 21pk, 28pc vs 6pc, etc.)
-        pack_size_penalty = 0
-        if original_details.get('pack_size') is not None:
-            expected_pack = original_details['pack_size']
-            variant_lower = variant_text.lower()
+        # Calculate final score with ML enhancements
+        # Get scoring weights from config
+        if self.ml_enabled and self.ml_config:
+            weights = self.ml_config.get('scoring_weights', {})
+            text_weight = weights.get('text_fuzzy', 0.4)
+            attr_weight = weights.get('attribute_match', 0.2)
+            visual_weight = weights.get('visual_similarity', 0.2)
+            ocr_weight = weights.get('ocr_text_match', 0.1)
+            brand_weight = weights.get('brand_match', 0.1)
             
-            # Extract pack size from result
-            result_pack = None
-            pack_patterns = [
-                r'(\d+)\s*pk\b',  # "8pk", "21pk", "8 pk"
-                r'(\d+)\s*pc\b',  # "28pc", "6pc", "28 pc"
-                r'(\d+)\s*pack\b',  # "8 pack", "21 pack"
-                r'(\d+)\s*piece',  # "28 piece", "6 piece"
-            ]
-            for pattern in pack_patterns:
-                match = re.search(pattern, variant_lower)
-                if match:
-                    try:
-                        result_pack = int(match.group(1))
-                        break
-                    except:
-                        pass
+            # Normalize base scores to 0-100
+            text_score = base_score
+            attr_score = (ml_attribute_score / 10) * 100  # Normalize to 0-100
+            visual_score_norm = (visual_score / 20) * 100  # Normalize to 0-100
+            ocr_score_norm = (ocr_score / 10) * 100  # Normalize to 0-100
+            brand_score_norm = (ml_brand_score / 10) * 100  # Normalize to 0-100
             
-            if result_pack is not None:
-                # EXACT match required - no tolerance for pack size
-                if result_pack != expected_pack:
-                    pack_size_penalty = 100  # REJECT completely - wrong pack size
-                    logging.warning(f"❌ Pack size mismatch: expected {expected_pack}pk/pc but found {result_pack}pk/pc - REJECTING")
+            # Weighted combination
+            ml_enhanced_score = (
+                text_weight * text_score +
+                attr_weight * attr_score +
+                visual_weight * visual_score_norm +
+                ocr_weight * ocr_score_norm +
+                brand_weight * brand_score_norm
+            )
+            
+            # Combine with traditional scoring
+            traditional_score = base_score + brand_bonus + model_bonus + color_bonus + lens_bonus - model_penalty - size_penalty - flavor_penalty - count_penalty
+            
+            # Use ML-enhanced score if it's significantly better, otherwise use traditional
+            if ml_enhanced_score > traditional_score + 5:
+                final_score = min(100, ml_enhanced_score)
+                logging.debug(f"Using ML-enhanced score: {final_score:.1f} (vs traditional: {traditional_score:.1f})")
             else:
-                # Pack size specified but not found in result - heavy penalty
-                pack_size_penalty = 50
-                logging.warning(f"❌ Pack size {expected_pack}pk/pc not found in result - REJECTING")
-        
-        # CRITICAL: Product type matching - MUST match exactly (Type II vs Type III)
-        product_type_penalty = 0
-        if original_details.get('product_type'):
-            expected_type = original_details['product_type'].upper()
-            variant_lower = variant_text.lower()
-            
-            # Extract product type from result
-            result_type = None
-            type_patterns = [
-                r'type\s*([ivxlcdm]+)',  # "Type II", "Type III" (Roman)
-                r'type\s*(\d+)',  # "Type 2", "Type 3" (Arabic)
-            ]
-            for pattern in type_patterns:
-                match = re.search(pattern, variant_lower)
-                if match:
-                    result_type = match.group(1).upper()
-                    break
-            
-            if result_type is not None:
-                # EXACT match required
-                if result_type != expected_type:
-                    product_type_penalty = 100  # REJECT completely - wrong type
-                    logging.warning(f"❌ Product type mismatch: expected Type {expected_type} but found Type {result_type} - REJECTING")
-            else:
-                # Type specified but not found - check if it's critical (Type II/III are usually critical)
-                if expected_type in ['II', 'III', '2', '3', 'IV', '4']:
-                    product_type_penalty = 50
-                    logging.warning(f"❌ Product type Type {expected_type} not found in result - REJECTING")
-        
-        # CRITICAL: Capacity matching - MUST match exactly (1.5qt vs 3.5qt, 16oz vs 13oz)
-        capacity_penalty = 0
-        if original_details.get('capacity') is not None:
-            expected_capacity = original_details['capacity']
-            variant_lower = variant_text.lower()
-            
-            # Extract capacity from result
-            result_capacity = None
-            capacity_patterns = [
-                r'(\d+\.?\d*)\s*qt\b',  # "1.5qt", "3.5 qt"
-                r'(\d+\.?\d*)\s*quart\b',  # "1.5 quart"
-                r'(\d+\.?\d*)\s*fl\s*oz\b',  # "16 fl oz", "13 fl oz"
-            ]
-            for pattern in capacity_patterns:
-                match = re.search(pattern, variant_lower)
-                if match:
-                    try:
-                        result_capacity = float(match.group(1))
-                        break
-                    except:
-                        pass
-            
-            if result_capacity is not None:
-                # EXACT match required - no tolerance for capacity
-                if abs(result_capacity - expected_capacity) > 0.01:  # Only allow floating point precision differences
-                    capacity_penalty = 100  # REJECT completely - wrong capacity
-                    logging.warning(f"❌ Capacity mismatch: expected {expected_capacity}qt/oz but found {result_capacity}qt/oz - REJECTING")
-            else:
-                # Capacity specified but not found - heavy penalty
-                capacity_penalty = 50
-                logging.warning(f"❌ Capacity {expected_capacity}qt/oz not found in result - REJECTING")
-        
-        # CRITICAL: Model matching - MUST match exactly (Geo Pop vs Declan, etc.)
-        model_exact_penalty = 0
-        if original_details.get('model'):
-            expected_model = original_details['model'].lower()
-            variant_lower = variant_text.lower()
-            
-            # Check if expected model appears in result
-            model_words = expected_model.split()
-            # For multi-word models, check if all key words appear
-            if len(model_words) > 1:
-                # Multi-word model - all words must appear
-                all_words_present = all(word in variant_lower for word in model_words if len(word) > 2)
-                if not all_words_present:
-                    # Check if a different model appears instead
-                    common_models = ['geo pop', 'declan', 'turbobooster', 'west loop', 'premier', 'fun grips', 
-                                   'ink joy', 's-gel', 'clearpoint', 'flair']
-                    for wrong_model in common_models:
-                        if wrong_model in variant_lower and wrong_model not in expected_model:
-                            model_exact_penalty = 100  # REJECT - wrong model
-                            logging.warning(f"❌ Model mismatch: expected '{original_details['model']}' but found '{wrong_model}' - REJECTING")
-                            break
-                    if model_exact_penalty == 0:
-                        model_exact_penalty = 50  # Model not found
-                        logging.warning(f"❌ Model '{original_details['model']}' not found in result - REJECTING")
-            else:
-                # Single word model - must appear exactly
-                if expected_model not in variant_lower:
-                    model_exact_penalty = 50
-                    logging.warning(f"❌ Model '{original_details['model']}' not found in result - REJECTING")
-        
-        # Calculate final score (cap at 100)
-        final_score = min(100, base_score + brand_bonus + model_bonus + color_bonus + lens_bonus - model_penalty - size_penalty - flavor_penalty - count_penalty - pack_size_penalty - product_type_penalty - capacity_penalty - model_exact_penalty)
+                final_score = min(100, traditional_score)
+        else:
+            # Traditional scoring only
+            final_score = min(100, base_score + brand_bonus + model_bonus + color_bonus + lens_bonus - model_penalty - size_penalty - flavor_penalty - count_penalty)
         
         return final_score
     
@@ -3450,126 +3227,6 @@ Respond with JSON:
                 
                 if score == 0:
                     continue
-                
-                # CRITICAL: Check pack size FIRST - if pack size doesn't match, reject immediately
-                if original_details.get('pack_size') is not None:
-                    expected_pack = original_details['pack_size']
-                    result_lower = full_result_text.lower()
-                    
-                    # Extract pack size from result
-                    result_pack = None
-                    pack_patterns = [
-                        r'(\d+)\s*pk\b',
-                        r'(\d+)\s*pc\b',
-                        r'(\d+)\s*pack\b',
-                        r'(\d+)\s*piece',
-                    ]
-                    for pattern in pack_patterns:
-                        match = re.search(pattern, result_lower)
-                        if match:
-                            try:
-                                result_pack = int(match.group(1))
-                                break
-                            except:
-                                pass
-                    
-                    if result_pack is not None and result_pack != expected_pack:
-                        score = 0  # REJECT - wrong pack size
-                        logging.warning(f"❌ REJECTED: Pack size mismatch. Expected {expected_pack}pk/pc but found {result_pack}pk/pc: {result.title[:60]}...")
-                        continue
-                    elif result_pack is None:
-                        score = 0  # REJECT - pack size not found
-                        logging.warning(f"❌ REJECTED: Pack size {expected_pack}pk/pc not found in result: {result.title[:60]}...")
-                        continue
-                
-                # CRITICAL: Check product type - if type doesn't match, reject immediately
-                if original_details.get('product_type'):
-                    expected_type = original_details['product_type'].upper()
-                    result_lower = full_result_text.lower()
-                    
-                    # Extract product type from result
-                    result_type = None
-                    type_patterns = [
-                        r'type\s*([ivxlcdm]+)',
-                        r'type\s*(\d+)',
-                    ]
-                    for pattern in type_patterns:
-                        match = re.search(pattern, result_lower)
-                        if match:
-                            result_type = match.group(1).upper()
-                            break
-                    
-                    if result_type is not None and result_type != expected_type:
-                        score = 0  # REJECT - wrong type
-                        logging.warning(f"❌ REJECTED: Product type mismatch. Expected Type {expected_type} but found Type {result_type}: {result.title[:60]}...")
-                        continue
-                    elif result_type is None and expected_type in ['II', 'III', '2', '3', 'IV', '4']:
-                        score = 0  # REJECT - type not found but was required
-                        logging.warning(f"❌ REJECTED: Product type Type {expected_type} not found in result: {result.title[:60]}...")
-                        continue
-                
-                # CRITICAL: Check capacity - if capacity doesn't match, reject immediately
-                if original_details.get('capacity') is not None:
-                    expected_capacity = original_details['capacity']
-                    result_lower = full_result_text.lower()
-                    
-                    # Extract capacity from result
-                    result_capacity = None
-                    capacity_patterns = [
-                        r'(\d+\.?\d*)\s*qt\b',
-                        r'(\d+\.?\d*)\s*quart\b',
-                        r'(\d+\.?\d*)\s*fl\s*oz\b',
-                    ]
-                    for pattern in capacity_patterns:
-                        match = re.search(pattern, result_lower)
-                        if match:
-                            try:
-                                result_capacity = float(match.group(1))
-                                break
-                            except:
-                                pass
-                    
-                    if result_capacity is not None and abs(result_capacity - expected_capacity) > 0.01:
-                        score = 0  # REJECT - wrong capacity
-                        logging.warning(f"❌ REJECTED: Capacity mismatch. Expected {expected_capacity}qt/oz but found {result_capacity}qt/oz: {result.title[:60]}...")
-                        continue
-                    elif result_capacity is None:
-                        score = 0  # REJECT - capacity not found
-                        logging.warning(f"❌ REJECTED: Capacity {expected_capacity}qt/oz not found in result: {result.title[:60]}...")
-                        continue
-                
-                # CRITICAL: Check model - if model doesn't match, reject immediately
-                if original_details.get('model'):
-                    expected_model = original_details['model'].lower()
-                    result_lower = full_result_text.lower()
-                    
-                    model_words = expected_model.split()
-                    if len(model_words) > 1:
-                        # Multi-word model - all words must appear
-                        all_words_present = all(word in result_lower for word in model_words if len(word) > 2)
-                        if not all_words_present:
-                            # Check if wrong model appears
-                            common_models = ['geo pop', 'declan', 'turbobooster', 'west loop', 'premier', 'fun grips', 
-                                           'ink joy', 's-gel', 'clearpoint', 'flair']
-                            wrong_model_found = False
-                            for wrong_model in common_models:
-                                if wrong_model in result_lower and wrong_model not in expected_model:
-                                    score = 0  # REJECT - wrong model
-                                    logging.warning(f"❌ REJECTED: Model mismatch. Expected '{original_details['model']}' but found '{wrong_model}': {result.title[:60]}...")
-                                    wrong_model_found = True
-                                    break
-                            if wrong_model_found:
-                                continue
-                            else:
-                                score = 0  # REJECT - model not found
-                                logging.warning(f"❌ REJECTED: Model '{original_details['model']}' not found in result: {result.title[:60]}...")
-                                continue
-                    else:
-                        # Single word model
-                        if expected_model not in result_lower:
-                            score = 0  # REJECT - model not found
-                            logging.warning(f"❌ REJECTED: Model '{original_details['model']}' not found in result: {result.title[:60]}...")
-                            continue
                 
                 # CRITICAL: Check generation first - if generation doesn't match, reject immediately
                 if original_details.get('generation'):
@@ -3916,38 +3573,6 @@ Respond with JSON:
                                 logging.warning(f"❌ REJECTED: Lens type '{original_details['lens_type']}' not found in result (checked title + page): {result.title[:60]}...")
                                 continue
                 
-                # CRITICAL: Color matching - if color is specified, it must match (e.g., "Silver" vs "Oat Milk")
-                if original_details.get('color'):
-                    expected_colors = original_details['color'].lower().split()
-                    result_lower = full_result_text.lower()
-                    
-                    # Check if expected colors appear in result
-                    matched_colors = sum(1 for color in expected_colors if color in result_lower and len(color) > 2)
-                    
-                    # For single color words like "Silver", require exact match (not "Oat Milk")
-                    if len(expected_colors) == 1 and expected_colors[0] in ['silver', 'black', 'white', 'red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'brown', 'grey', 'gray', 'teal', 'lime', 'jade', 'azalea', 'periwinkle', 'amethyst']:
-                        expected_color = expected_colors[0]
-                        # Check if the exact color appears
-                        if expected_color not in result_lower:
-                            # Check if a different color appears instead (wrong product)
-                            other_colors = ['silver', 'black', 'white', 'red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'brown', 'grey', 'gray', 'teal', 'lime', 'jade', 'azalea', 'periwinkle', 'amethyst', 'oat milk']
-                            for other_color in other_colors:
-                                if other_color != expected_color and other_color in result_lower:
-                                    score = 0  # REJECT - wrong color
-                                    logging.warning(f"❌ REJECTED: Color mismatch. Expected '{expected_color}' but found '{other_color}': {result.title[:60]}...")
-                                    break
-                            if score == 0:
-                                continue
-                        # Also check for "Oat Milk" when looking for "Silver" - these are different products
-                        if expected_color == 'silver' and 'oat milk' in result_lower:
-                            score = 0  # REJECT - "Oat Milk" is not "Silver"
-                            logging.warning(f"❌ REJECTED: Color mismatch. Expected 'Silver' but found 'Oat Milk' (different product): {result.title[:60]}...")
-                            continue
-                    elif matched_colors == 0:
-                        # No colors matched - this might be wrong product
-                        score -= 20  # Heavy penalty for missing colors
-                        logging.debug(f"Color mismatch: expected '{original_details['color']}' but not found in result")
-                
                 # CRITICAL: Frame color matching (e.g., "Shiny Black" vs "Matte Black" vs "Black")
                 if original_details.get('frame_color'):
                     expected_frame = original_details['frame_color'].lower()
@@ -4132,6 +3757,7 @@ Respond with JSON:
                     result_lower = full_result_text.lower()
                     
                     # Extract count from result
+                    import re
                     result_count = None
                     count_patterns = [
                         r'(\d+)\s*ct',
@@ -4164,70 +3790,6 @@ Respond with JSON:
                     elif expected_count > 10:  # Only require count match for significant counts
                         # If count is specified but not found, apply penalty but don't reject (might be in description)
                         logging.debug(f"⚠ Count not found in result title, but expected {expected_count}")
-                
-                # AI-Enhanced: Use semantic matching for final validation if available
-                semantic_validation = None
-                if self.use_semantic_matching and score >= self.fuzzy_threshold:
-                    try:
-                        # Create required attributes dict for validation
-                        required_attrs = {
-                            'pack_size': original_details.get('pack_size'),
-                            'product_type': original_details.get('product_type'),
-                            'capacity': original_details.get('capacity'),
-                            'model': original_details.get('model'),
-                            'color': original_details.get('color'),
-                            'brand': original_details.get('brand'),
-                        }
-                        
-                        # Remove None values
-                        required_attrs = {k: v for k, v in required_attrs.items() if v is not None and v != ""}
-                        
-                        if required_attrs and self.semantic_matcher:
-                            if not self.semantic_matcher.is_initialized():
-                                self.semantic_matcher.load_model()
-                            
-                            is_valid, confidence, reason = self.semantic_matcher.validate_match_semantic(
-                                original_product_name if original_product_name else variant,
-                                result.title,
-                                required_attrs
-                            )
-                            semantic_validation = (is_valid, confidence, reason)
-                            
-                            if not is_valid:
-                                logging.warning(f"❌ Semantic validation failed: {reason} | Score: {score:.1f}%")
-                                continue  # Skip this result
-                            else:
-                                logging.debug(f"✓ Semantic validation passed: {reason} | Confidence: {confidence:.2f}")
-                    except Exception as e:
-                        logging.debug(f"Semantic validation error: {e}")
-                
-                # Optional: Use LLM for complex/ambiguous cases (borderline scores)
-                if self.use_llm_validation and score >= 75 and score < 90:
-                    # Use LLM for borderline cases to ensure accuracy
-                    try:
-                        required_attrs = {
-                            'pack_size': original_details.get('pack_size'),
-                            'product_type': original_details.get('product_type'),
-                            'capacity': original_details.get('capacity'),
-                            'model': original_details.get('model'),
-                            'color': original_details.get('color'),
-                        }
-                        required_attrs = {k: v for k, v in required_attrs.items() if v is not None and v != ""}
-                        
-                        if required_attrs:
-                            is_valid, reasoning = self._validate_with_llm(
-                                original_product_name if original_product_name else variant,
-                                result.title,
-                                required_attrs
-                            )
-                            
-                            if not is_valid:
-                                logging.warning(f"❌ LLM validation failed: {reasoning} | Score: {score:.1f}%")
-                                continue  # Skip this result
-                            else:
-                                logging.debug(f"✓ LLM validation passed: {reasoning}")
-                    except Exception as e:
-                        logging.debug(f"LLM validation error: {e}")
                 
                 # CRITICAL: Final validation before accepting match - prevent false positives
                 # For simple lens colors, ensure the lens color actually matches
@@ -4463,6 +4025,7 @@ Respond with JSON:
                 
                 # 3. Count must match (if specified and significant)
                 if original_details and original_details.get('count') is not None and original_details['count'] > 10:
+                    import re
                     result_lower = best_match.title.lower()
                     result_count = None
                     count_patterns = [
@@ -4668,26 +4231,7 @@ class ProductURLFinder:
         
         if has_product_name_col:
             # We have "Product Name" column - use it directly, NO UPCitemdb
-            # BUT: If product name is "Unknown" or empty/invalid, try to use GTIN with UPCitemdb
-            if product_name.lower() in ['unknown', 'n/a', 'na', ''] or is_product_id(product_name):
-                # Product name is invalid/unknown - try to get it from GTIN using UPCitemdb
-                if gtin:
-                    logging.info(f"Product name is '{product_name}' (invalid/unknown). Using UPCitemdb to get product name from GTIN {gtin}...")
-                    try:
-                        product_variations = self.upc_scraper.search_by_gtin(gtin)
-                        if product_variations:
-                            # Use UPCitemdb variations as search queries
-                            search_queries.extend(product_variations[:self.config.get('max_variants', 8)])
-                            logging.info(f"✓ Retrieved {len(product_variations)} product name variations from UPCitemdb: {product_variations[:3]}")
-                            # Update original_product_name for matching
-                            original_product_name = product_variations[0] if product_variations else product_name
-                        else:
-                            logging.warning(f"Could not retrieve product names from UPCitemdb for GTIN {gtin}")
-                    except Exception as e:
-                        logging.error(f"Error retrieving product names from UPCitemdb: {e}")
-                else:
-                    logging.warning(f"Product name is '{product_name}' (invalid/unknown) but no GTIN available - cannot search")
-            elif not is_product_id(product_name):
+            if not is_product_id(product_name):
                 search_queries.append(product_name)
                 logging.info(f"Using product name from Excel (Product Name column exists): {product_name[:60]}...")
             else:
@@ -5252,6 +4796,9 @@ class ProductURLFinder:
             return 'jbhifi'
         elif 'harvey' in retailer_lower and 'norman' in retailer_lower:
             return 'harveynorman'
+        elif 'costco' in retailer_lower:
+            # Handle both "costco" and "costco-us"
+            return 'costco'
         
         # If no match found, try direct lookup (for exact matches)
         if retailer_lower in RETAILERS:
@@ -5316,10 +4863,6 @@ Examples:
     parser.add_argument('--max-variants', type=int, default=8, help='Maximum number of variants to try')
     parser.add_argument('--delay', type=float, default=2.0, help='Delay between requests (seconds)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
-    parser.add_argument('--use-semantic', action='store_true', default=True, help='Use AI semantic matching (sentence transformers) for better accuracy (default: True)')
-    parser.add_argument('--no-semantic', action='store_true', help='Disable semantic matching (use only fuzzy matching)')
-    parser.add_argument('--use-llm', action='store_true', help='Use LLM (OpenAI) for complex validation (requires OPENAI_API_KEY env var)')
-    parser.add_argument('--semantic-model', type=str, default='all-MiniLM-L6-v2', help='Sentence transformer model (default: all-MiniLM-L6-v2)')
     
     return parser.parse_args()
 
@@ -5342,25 +4885,6 @@ def main():
     config['fuzzy_threshold'] = args.threshold
     config['max_variants'] = args.max_variants
     config['request_delay'] = (args.delay * 0.5, args.delay * 1.5)
-    
-    # AI/ML Configuration
-    if args.no_semantic:
-        config['use_semantic_matching'] = False
-        logging.info("Semantic matching disabled")
-    else:
-        config['use_semantic_matching'] = args.use_semantic
-        if config['use_semantic_matching']:
-            logging.info("✓ Semantic matching enabled (AI-powered product understanding)")
-    config['semantic_model'] = args.semantic_model
-    config['use_llm_validation'] = args.use_llm
-    # Get LLM API key from environment variable
-    import os
-    config['llm_api_key'] = os.getenv('OPENAI_API_KEY', None)
-    if args.use_llm and not config['llm_api_key']:
-        logging.warning("⚠️  --use-llm specified but OPENAI_API_KEY not set. LLM validation will be disabled.")
-        config['use_llm_validation'] = False
-    elif config['use_llm_validation']:
-        logging.info("✓ LLM validation enabled (OpenAI API for complex cases)")
     
     # Create processor
     processor = ProductURLFinder(config)
