@@ -1,0 +1,34 @@
+retailer,gtin,description,status,store_id,product_id,matched_product_name,match_score
+Doordash 7/11,00022000008985,"Extra Gum Polar Ice Sugar Free Chewing Gum, Single Pack - 15 Sticks",high,1719586,4324291068,Extra Sugar Free Polar Ice Chewing Gum Sticks (15 ct),96.97
+Doordash 7/11,00022000017888,Extra Polar Ice Sugar Free Chewing Gum - 35 ct Pack,high,738099,15896403893,Extra Sugar Free Polar Ice Chewing Gum Sticks (35 ct),94.62
+Doordash 7/11,00019000083425,"Life Savers 5 Flavors Gummy Candy  - 7 oz, 49 Ct Bag",high,738099,6592974820,Life Savers 5 Flavors Gummies Candy Bag (7 oz),90.24
+Doordash 7/11,00019000083449,Life Savers Wild Berries Gummy Candy - 7 oz Bag,high,738185,4883335529,Life Savers Wild Berries Gummy Candies (7 oz),95.24
+Doordash 7/11,00040000004318,"M&M's Milk Chocolate Candy, Share Size - 3.14 oz Bag",high,738185,9177662388,M&M's Milk Chocolate Candies Bag Share Size (3.14 oz),96.15
+Doordash 7/11,00040000004325,"M&M's Peanut Milk Chocolate Candy, Share Size - 3.27 oz Bag",high,738099,6592974755,M&M's Peanut Milk Chocolate Candies Bag Share Size (3.27 oz),96.61
+Doordash 7/11,00022000015969,"Skittles Wild Berry Chewy Candy, Share Size - 4 oz Bag",high,738099,6592974767,Skittles Wild Berry Chew Candies Bag Share Size (4 oz),95.15
+Doordash 7/11,00040000002635,"Snickers Milk Chocolate Candy Bars, Share Size - 3.29 oz",high,738099,6592974796,Snickers Original Super Bowl Milk Chocolate Candy Bar Share Size (3.29 oz),95.05
+Doordash 7/11,00022000135377,"Starburst Favereds Minis Fruit Chewy Candy Grab N Go, 8 oz Bag",high,34439128,30298317421,Starburst FaveReds Grab N Go Fruit Mini Chewy Candy Bag (8 oz),99.17
+Doordash 7/11,00040000004059,"Twix Milk Chocolate Caramel Cookie Candy Bars, Share Size - 3.02 oz Pack",high,738099,6592974758,Twix Caramel Milk Chocolate Cookie Candy Bars Share Size (3.02 oz),100.0
+Doordash 7/11,00022000120304,Life Savers Collisions Gummy Candy - 7 oz Bag,medium,738099,26894869478,Life Savers Collisions Raspberry Lemonade Cherry Watermelon & Pineapple Punch Gummies Bag (7 oz),83.78
+Doordash 7/11,00040000002239,"M&M's Peanut Butter Milk Chocolate Candy, Share Size - 2.83 oz Bag",medium,738099,6592974755,M&M's Peanut Milk Chocolate Candies Bag Share Size (3.27 oz),89.6
+Doordash 7/11,00040000004608,"Skittles Original Chewy Candy, Share Size - 4 oz Bag",medium,738099,6592974767,Skittles Wild Berry Chew Candies Bag Share Size (4 oz),81.19
+Doordash 7/11,00040000574576,"Twix Salted Caramel Chocolate Cookie Bars, Share Size - 2.8.oz",medium,738099,6592974758,Twix Caramel Milk Chocolate Cookie Candy Bars Share Size (3.02 oz),89.72
+Doordash 7/11,00022000017895,"5 Gum Peppermint Cobalt Sugar Free Chewing Gum, Five Gum - 35 ct",not_found,,,,
+Doordash 7/11,00022000017901,"5 Gum Spearmint Rain Sugar Free Chewing Gum, Five Gum - 35 Stick Pack",not_found,,,,
+Doordash 7/11,00022000159342,Altoids Wintergreen Breath Mints - 1.76 Oz Tin,not_found,,,,
+Doordash 7/11,00022000020369,Extra Gum Peppermint Sugar Free Chewing Gum - 35 Stick Bulk Pack,not_found,,,,
+Doordash 7/11,00022000017871,Extra Gum Spearmint Sugar Free Chewing Gum Pack - 35 ct,not_found,,,,
+Doordash 7/11,00019000170491,Life Savers Sour Gummy Candy - 7 oz Bag,not_found,,,,
+Doordash 7/11,00040000513629,"M&M's Peanut Butter Milk Chocolate Candy, Grab & Go Size - 5 oz Bag",not_found,,,,
+Doordash 7/11,00040000513582,"M&M's Peanut Milk Chocolate Candy, Grab & Go - 5.5 oz Bag",not_found,,,,
+Doordash 7/11,00040000004011,"Milky Way Candy Milk Chocolate Bar, Share Size - 3.63 Oz",not_found,,,,
+Doordash 7/11,00022000285942,Skittles Gummies Original Gummy Candy - 5.8 oz Bag,not_found,,,,
+Doordash 7/11,00022000289735,Skittles Gummies Sour Gummy Candy - 5.8 oz Bag,not_found,,,,
+Doordash 7/11,00022000285966,Skittles Gummies Wild Berry Gummy Candy - 5.8 oz Bag,not_found,,,,
+Doordash 7/11,00040000001607,"Skittles Original Chewy Candy, Full Size - 2.17 oz Bag",not_found,,,,
+Doordash 7/11,00040000004660,"Skittles Sour Chewy Candy, Share Size - 3.3 oz Pack",not_found,,,,
+Doordash 7/11,00040000001621,"Skittles Wild Berry Gummy Candy, Full Size - 2.17 oz Pack",not_found,,,,
+Doordash 7/11,00040000441489,"Snickers Crunchy Peanut Butter Squared Chocolate Bars, Share Size, 3.56 oz",not_found,,,,
+Doordash 7/11,00022000016065,"Starburst FaveREDs Fruit Chews Gummy Candy, Share Size - 3.45 oz",not_found,,,,
+Doordash 7/11,00022000024343,"Starburst Original Fruit Chews Candy Share Size Pack, 3.45 ounce",not_found,,,,
+Doordash 7/11,00040000551898,"Twix Cookies & Creme Chocolate Candy Bar, Share Size - 2.87 oz Pack",not_found,,,,
